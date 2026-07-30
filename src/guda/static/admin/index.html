@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GUDA Admin</title>
+  <link rel="stylesheet" href="assets/admin.css?v=20260730-1" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="mark">G</div>
+        <div>
+          <strong>GUDA</strong>
+          <span data-i18n="brandSubtitle">Source Intelligence</span>
+        </div>
+      </div>
+      <nav id="nav"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" data-i18n="adminConsole">Admin Console</p>
+          <h1 id="page-title"></h1>
+        </div>
+        <div class="top-actions">
+          <button id="theme-toggle" class="icon-button" type="button"></button>
+          <button id="lang-toggle" class="icon-button" type="button"></button>
+          <button id="refresh" class="icon-button" type="button" data-i18n="refresh">Refresh</button>
+        </div>
+      </header>
+
+      <section id="status" class="status hidden"></section>
+      <section id="view-root" class="view active"></section>
+    </main>
+  </div>
+  <script src="assets/admin.js?v=20260730-1"></script>
+</body>
+</html>

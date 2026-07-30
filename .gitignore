@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+
+# Data and runtime artifacts
+data/raw/
+data/processed/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
