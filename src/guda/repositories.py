@@ -566,7 +566,30 @@ class Repository:
         return {"metrics": metrics, "platforms": platforms, "recent_evidence": recent}
 
     def app_evidence(self, *, query: str | None, platform: str | None, item_type: str | None, page: int, page_size: int) -> dict[str, Any]:
+        return self.evidence_items(query=query, platform=platform, item_type=item_type, language=None, source_id=None, page=page, page_size=page_size, sort="fetched_at", direction="desc")
+
+    def evidence_items(
+        self,
+        *,
+        query: str | None,
+        platform: str | None,
+        item_type: str | None,
+        language: str | None,
+        source_id: str | None,
+        page: int,
+        page_size: int,
+        sort: str,
+        direction: str,
+    ) -> dict[str, Any]:
         page, page_size, offset = clamp_page(page, page_size)
+        sortable = {
+            "fetched_at": "e.fetched_at",
+            "created_at_source": "e.created_at_source",
+            "platform": "e.platform",
+            "item_type": "e.item_type",
+        }
+        order = sortable.get(sort, "e.fetched_at")
+        direction_sql = "asc" if direction.lower() == "asc" else "desc"
         clauses: list[str] = []
         params: list[Any] = []
         if query:
@@ -578,18 +601,78 @@ class Repository:
         if item_type:
             clauses.append("e.item_type = ?")
             params.append(item_type)
+        if language:
+            clauses.append("e.language = ?")
+            params.append(language)
+        if source_id:
+            clauses.append("e.source_id = ?")
+            params.append(source_id)
         where = " where " + " and ".join(clauses) if clauses else ""
         total = self.conn.execute(f"select count(*) from evidence_items e{where}", params).fetchone()[0]
         rows = self.conn.execute(
             f"""
             select e.id, e.platform, e.item_type, e.title, e.text, e.url, e.fetched_at,
-                   e.created_at_source, e.engagement, e.topics, s.name as source_name
+                   e.created_at_source, e.language, e.engagement, e.entities, e.topics, e.text_hash,
+                   s.id as source_id, s.name as source_name, s.platform as source_platform
             from evidence_items e
             join sources s on s.id = e.source_id
             {where}
-            order by e.fetched_at desc
+            order by {order} {direction_sql}, e.id asc
             limit ? offset ?
             """,
             [*params, page_size, offset],
         ).fetchall()
-        return page_result([dict(row) for row in rows], total=total, page=page, page_size=page_size)
+        items = []
+        for row in rows:
+            item = dict(row)
+            text = item.pop("text") or ""
+            item["snippet"] = text[:240]
+            item["source"] = {"id": item.pop("source_id"), "name": item.pop("source_name"), "platform": item.pop("source_platform")}
+            items.append(item)
+        return page_result(items, total=total, page=page, page_size=page_size)
+
+    def get_evidence_item(self, evidence_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            select e.*, s.name as source_name, s.platform as source_platform
+            from evidence_items e
+            join sources s on s.id = e.source_id
+            where e.id = ?
+            """,
+            (evidence_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["source"] = {"id": data["source_id"], "name": data.pop("source_name"), "platform": data.pop("source_platform")}
+        data["citations"] = {"url": data.get("url"), "raw_item_id": data.get("raw_item_id")}
+        return data
+
+    def evidence_facets(self) -> dict[str, list[dict[str, Any]]]:
+        def grouped(column: str) -> list[dict[str, Any]]:
+            rows = self.conn.execute(
+                f"""
+                select {column} as value, count(*) as count
+                from evidence_items
+                where {column} is not null and {column} != ''
+                group by {column}
+                order by count desc, value asc
+                """
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        sources = self.conn.execute(
+            """
+            select s.id, s.name, s.platform, count(e.id) as count
+            from sources s
+            join evidence_items e on e.source_id = s.id
+            group by s.id, s.name, s.platform
+            order by count desc, s.name asc
+            """
+        ).fetchall()
+        return {
+            "platforms": grouped("platform"),
+            "item_types": grouped("item_type"),
+            "languages": grouped("language"),
+            "sources": [dict(row) for row in sources],
+        }

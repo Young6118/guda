@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 import secrets
 
-from fastapi import FastAPI, Query, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -205,6 +205,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_size: int = Query(default=20, ge=1, le=100),
     ) -> dict[str, Any]:
         return repo.app_evidence(query=q, platform=platform, item_type=item_type, page=page, page_size=page_size)
+
+    @app.get("/api/evidence-items")
+    def list_evidence_items(
+        q: str | None = None,
+        platform: str | None = None,
+        item_type: str | None = None,
+        language: str | None = None,
+        source_id: str | None = None,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+        sort: str = "fetched_at",
+        direction: str = "desc",
+    ) -> dict[str, Any]:
+        return repo.evidence_items(query=q, platform=platform, item_type=item_type, language=language, source_id=source_id, page=page, page_size=page_size, sort=sort, direction=direction)
+
+    @app.get("/api/evidence-items/{evidence_id}")
+    def get_evidence_item(evidence_id: str) -> dict[str, Any]:
+        item = repo.get_evidence_item(evidence_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="evidence item not found")
+        return item
+
+    @app.get("/api/evidence/facets")
+    def evidence_facets() -> dict[str, list[dict[str, Any]]]:
+        return repo.evidence_facets()
 
     @app.put("/rate-policies/{platform}")
     @app.put("/api/rate-policies/{platform}")
