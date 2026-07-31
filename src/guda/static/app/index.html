@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GUDA Intelligence</title>
-  <link rel="stylesheet" href="assets/app.css?v=20260730-2" />
+  <link rel="stylesheet" href="assets/app.css?v=20260730-5" />
 </head>
 <body>
   <main class="app">
@@ -15,7 +15,13 @@
       </div>
       <nav><a href="../admin/">Admin</a><button id="refresh" type="button">刷新</button></nav>
     </header>
+    <section class="hero-bar">
+      <label>Topic Pack<select id="topic-pack-select"></select></label>
+      <span id="topic-pack-meta" class="muted">选择一个主题包查看 dashboard</span>
+    </section>
     <section id="metrics" class="metrics"></section>
+    <section id="dashboard" class="dashboard"></section>
+    <section id="trends" class="trend-grid"></section>
     <section class="layout">
       <aside class="filters">
         <h2>筛选</h2>
@@ -35,6 +41,6 @@
       <aside id="detail" class="detail"><h2>证据详情</h2><div class="muted">选择一条证据查看引用和原文。</div></aside>
     </section>
   </main>
-  <script src="assets/app.js?v=20260730-2"></script>
+  <script src="assets/app.js?v=20260730-5"></script>
 </body>
 </html>

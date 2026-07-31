@@ -221,6 +221,164 @@ class Repository:
         self.conn.commit()
         return topic_id
 
+    def list_topic_packs(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "select id, name, description, keywords, entities, languages, regions, priority, owner, created_at, updated_at from topic_packs order by priority desc, created_at desc"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_topic_pack(self, topic_pack_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "select id, name, description, keywords, entities, languages, regions, priority, owner, created_at, updated_at from topic_packs where id = ?",
+            (topic_pack_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def topic_pack_dashboard(self, *, topic_pack_id: str, from_ts: str | None = None, to_ts: str | None = None, bucket: str = "day", limit: int = 10) -> dict[str, Any]:
+        topic_pack = self.get_topic_pack(topic_pack_id)
+        if topic_pack is None:
+            raise KeyError(f"topic pack not found: {topic_pack_id}")
+        task_rows = self.conn.execute(
+            "select id from collection_tasks where topic_pack_id = ?",
+            (topic_pack_id,),
+        ).fetchall()
+        task_ids = [row["id"] for row in task_rows]
+        if not task_ids:
+            return {
+                "topic_pack": topic_pack,
+                "summary": {"evidence_count": 0, "source_count": 0, "platform_count": 0, "company_count": 0, "first_seen_at": None, "last_seen_at": None},
+                "timeline": [],
+                "source_coverage": [],
+                "rising_entities": [],
+                "representative_evidence": [],
+            }
+        placeholders = ",".join("?" for _ in task_ids)
+        evidence_where = [f"ri.task_id in ({placeholders})"]
+        params: list[Any] = list(task_ids)
+        if from_ts:
+            evidence_where.append("coalesce(e.created_at_source, e.fetched_at) >= ?")
+            params.append(from_ts)
+        if to_ts:
+            evidence_where.append("coalesce(e.created_at_source, e.fetched_at) <= ?")
+            params.append(to_ts)
+        where_sql = " and ".join(evidence_where)
+        evidence_rows = self.conn.execute(
+            f"""
+            select e.id, e.platform, e.item_type, e.title, e.text, e.url, e.fetched_at, e.created_at_source,
+                   e.language, e.engagement, e.entities, e.topics, e.text_hash, s.id as source_id, s.name as source_name
+            from raw_items ri
+            join evidence_items e on e.raw_item_id = ri.id
+            join sources s on s.id = e.source_id
+            where {where_sql}
+            order by coalesce(e.created_at_source, e.fetched_at) desc, e.fetched_at desc
+            """,
+            params,
+        ).fetchall()
+        evidence = [dict(row) for row in evidence_rows]
+        source_ids = {row["source_id"] for row in evidence_rows}
+        platforms = {row["platform"] for row in evidence_rows}
+        companies = self.conn.execute(
+            f"""
+            select count(distinct ce.id)
+            from raw_items ri
+            join evidence_items e on e.raw_item_id = ri.id
+            join company_entities ce on ce.source_id = e.source_id
+            where {where_sql}
+            """,
+            params,
+        ).fetchone()[0]
+        timeline = self._topic_pack_timeline(evidence, bucket=bucket)
+        source_coverage = self._topic_pack_source_coverage(evidence, limit=limit)
+        rising_entities = self._topic_pack_rising_entities(evidence, limit=limit)
+        representative_evidence = self._topic_pack_representative_evidence(evidence, limit=limit)
+        first_seen = min((row["created_at_source"] or row["fetched_at"] for row in evidence_rows), default=None)
+        last_seen = max((row["created_at_source"] or row["fetched_at"] for row in evidence_rows), default=None)
+        return {
+            "topic_pack": topic_pack,
+            "summary": {
+                "evidence_count": len(evidence_rows),
+                "source_count": len(source_ids),
+                "platform_count": len(platforms),
+                "company_count": companies,
+                "first_seen_at": first_seen,
+                "last_seen_at": last_seen,
+            },
+            "timeline": timeline,
+            "source_coverage": source_coverage,
+            "rising_entities": rising_entities,
+            "representative_evidence": representative_evidence,
+        }
+
+    def topic_pack_trends(self, *, topic_pack_id: str, from_ts: str | None = None, to_ts: str | None = None, bucket: str = "day", limit: int = 20) -> dict[str, Any]:
+        dashboard = self.topic_pack_dashboard(topic_pack_id=topic_pack_id, from_ts=from_ts, to_ts=to_ts, bucket=bucket, limit=limit)
+        timeline = dashboard["timeline"]
+        platform_counts: dict[str, int] = {}
+        for row in dashboard["source_coverage"]:
+            platform_counts[row["platform"]] = platform_counts.get(row["platform"], 0) + row["evidence_count"]
+        return {
+            "topic_pack": dashboard["topic_pack"],
+            "range": {"from": from_ts, "to": to_ts, "bucket": bucket},
+            "volume": timeline,
+            "platforms": [{"platform": key, "evidence_count": value} for key, value in sorted(platform_counts.items(), key=lambda pair: (-pair[1], pair[0]))],
+            "rising_entities": dashboard["rising_entities"][:limit],
+            "source_coverage": dashboard["source_coverage"][:limit],
+        }
+
+    def _topic_pack_timeline(self, evidence: list[dict[str, Any]], *, bucket: str) -> list[dict[str, Any]]:
+        counts: dict[str, dict[str, Any]] = {}
+        for row in evidence:
+            stamp = row.get("created_at_source") or row.get("fetched_at")
+            if not stamp:
+                continue
+            key = stamp[:10] if bucket == "day" else stamp[:7]
+            entry = counts.setdefault(key, {"bucket": key, "evidence_count": 0, "source_ids": set()})
+            entry["evidence_count"] += 1
+            entry["source_ids"].add(row["source_id"])
+        out = []
+        for key in sorted(counts):
+            entry = counts[key]
+            out.append({"bucket": key, "evidence_count": entry["evidence_count"], "source_count": len(entry["source_ids"])})
+        return out
+
+    def _topic_pack_source_coverage(self, evidence: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+        coverage: dict[str, dict[str, Any]] = {}
+        for row in evidence:
+            entry = coverage.setdefault(row["source_id"], {"source_id": row["source_id"], "source_name": row["source_name"], "platform": row["platform"], "evidence_count": 0, "latest_fetched_at": row["fetched_at"]})
+            entry["evidence_count"] += 1
+            if row["fetched_at"] > entry["latest_fetched_at"]:
+                entry["latest_fetched_at"] = row["fetched_at"]
+        return sorted(coverage.values(), key=lambda row: (-row["evidence_count"], row["source_name"]))[:limit]
+
+    def _topic_pack_rising_entities(self, evidence: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+        midpoint = max(len(evidence) // 2, 1)
+        recent = evidence[:midpoint]
+        prior = evidence[midpoint:midpoint * 2]
+        def count_entities(rows: list[dict[str, Any]]) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for row in rows:
+                for entity in json.loads(row.get("entities") or "[]"):
+                    counts[entity] = counts.get(entity, 0) + 1
+            return counts
+        recent_counts = count_entities(recent)
+        prior_counts = count_entities(prior)
+        out = []
+        for entity, count in sorted(recent_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            previous = prior_counts.get(entity, 0)
+            out.append({"entity": entity, "evidence_count": count, "previous_count": previous, "velocity_score": round(count / max(previous, 1), 2)})
+        return out[:limit]
+
+    def _topic_pack_representative_evidence(self, evidence: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+        seen: set[str] = set()
+        out = []
+        for row in evidence:
+            if row["text_hash"] in seen:
+                continue
+            seen.add(row["text_hash"])
+            out.append({"id": row["id"], "title": row["title"], "url": row["url"], "platform": row["platform"], "item_type": row["item_type"], "fetched_at": row["fetched_at"], "source_name": row["source_name"]})
+            if len(out) >= limit:
+                break
+        return out
+
     def create_collection_task(
         self,
         *,

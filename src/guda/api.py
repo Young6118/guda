@@ -196,6 +196,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def app_overview() -> dict[str, Any]:
         return repo.app_overview()
 
+    @app.get("/api/topic-packs")
+    def list_topic_packs() -> list[dict[str, Any]]:
+        return repo.list_topic_packs()
+
+    @app.get("/api/topic-packs/{topic_pack_id}/dashboard")
+    def topic_pack_dashboard(
+        topic_pack_id: str,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        bucket: str = Query(default="day"),
+        limit: int = Query(default=10, ge=1, le=100),
+    ) -> dict[str, Any]:
+        try:
+            return repo.topic_pack_dashboard(topic_pack_id=topic_pack_id, from_ts=from_ts, to_ts=to_ts, bucket=bucket, limit=limit)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="topic pack not found")
+
+    @app.get("/api/topic-packs/{topic_pack_id}/trends")
+    def topic_pack_trends(
+        topic_pack_id: str,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        bucket: str = Query(default="day"),
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        try:
+            return repo.topic_pack_trends(topic_pack_id=topic_pack_id, from_ts=from_ts, to_ts=to_ts, bucket=bucket, limit=limit)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="topic pack not found")
+
     @app.get("/api/app/evidence")
     def app_evidence(
         q: str | None = None,
