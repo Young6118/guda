@@ -125,6 +125,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     static_dir = Path(__file__).parent / "static" / "admin"
     app.mount("/admin", StaticFiles(directory=static_dir, html=True), name="admin")
     app_dir = Path(__file__).parent / "static" / "app"
+    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app_dir = frontend_dist
     app.mount("/app", StaticFiles(directory=app_dir, html=True), name="app")
 
     @app.get("/health")
@@ -195,6 +198,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/app/overview")
     def app_overview() -> dict[str, Any]:
         return repo.app_overview()
+
+    @app.get("/api/app/analytics")
+    def app_analytics(
+        q: str | None = None,
+        topic_pack_id: str | None = None,
+        days: int = Query(default=30, ge=1, le=365),
+        limit: int = Query(default=30, ge=1, le=100),
+    ) -> dict[str, Any]:
+        return repo.app_analytics(query=q, topic_pack_id=topic_pack_id, days=days, limit=limit)
 
     @app.get("/api/topic-packs")
     def list_topic_packs() -> list[dict[str, Any]]:

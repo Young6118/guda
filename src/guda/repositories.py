@@ -736,6 +736,61 @@ class Repository:
             ).fetchall()
         return page_result([dict(row) for row in rows], total=total, page=page, page_size=page_size)
 
+    def app_analytics(self, *, query: str | None = None, topic_pack_id: str | None = None, days: int = 30, limit: int = 30) -> dict[str, Any]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if query:
+            clauses.append("(e.title like ? or e.text like ? or e.platform like ?)")
+            params.extend([like_query(query)] * 3)
+        if topic_pack_id:
+            clauses.append("ri.task_id in (select id from collection_tasks where topic_pack_id = ?)")
+            params.append(topic_pack_id)
+        where = " where " + " and ".join(clauses) if clauses else ""
+        rows = self.conn.execute(
+            f"""
+            select e.id, e.title, e.text, e.platform, e.item_type, e.fetched_at, e.topics, e.entities,
+                   e.engagement, s.name as source_name
+            from evidence_items e
+            join raw_items ri on ri.id = e.raw_item_id
+            join sources s on s.id = e.source_id
+            {where}
+            order by e.fetched_at desc
+            """,
+            params,
+        ).fetchall()
+        import re
+        import html
+        from collections import Counter
+        stopwords = {"the", "and", "for", "with", "that", "this", "from", "are", "was", "you", "your", "https", "http", "www", "com", "html", "quot", "amp", "x2f", "href", "rel", "nofollow", "strong", "span", "div", "the", "and", "for", "with", "that", "this", "from", "are", "was", "you", "your", "的", "了", "是", "和", "在", "有", "我", "也", "就", "都", "不", "一个"}
+        words: Counter[str] = Counter()
+        platforms: Counter[str] = Counter()
+        item_types: Counter[str] = Counter()
+        timeline: Counter[str] = Counter()
+        topics: Counter[str] = Counter()
+        entities: Counter[str] = Counter()
+        for row in rows:
+            text = html.unescape(f"{row['title'] or ''} {row['text'] or ''}")
+            text = re.sub(r"<[^>]+>", " ", text)
+            text = re.sub(r"https?://\\S+", " ", text).lower()
+            tokens = re.findall(r"[a-z][a-z0-9_-]{2,}|[\\u4e00-\\u9fff]{2,8}", text)
+            words.update(token for token in tokens if token not in stopwords and not token.isdigit())
+            platforms[row["platform"]] += 1
+            item_types[row["item_type"]] += 1
+            timeline[(row["fetched_at"] or "")[:10]] += 1
+            for value in json.loads(row["topics"] or "[]"):
+                topics[value] += 1
+            for value in json.loads(row["entities"] or "[]"):
+                entities[value] += 1
+        return {
+            "summary": {"evidence_count": len(rows), "source_count": len({row["source_name"] for row in rows}), "platform_count": len(platforms), "topic_count": len(topics)},
+            "word_cloud": [{"name": word, "value": count} for word, count in words.most_common(limit)],
+            "topics": [{"name": word, "value": count} for word, count in topics.most_common(limit)],
+            "entities": [{"name": word, "value": count} for word, count in entities.most_common(limit)],
+            "platforms": [{"name": key, "value": value} for key, value in platforms.most_common(limit)],
+            "item_types": [{"name": key, "value": value} for key, value in item_types.most_common(limit)],
+            "timeline": [{"date": key, "value": value} for key, value in sorted(timeline.items())],
+        }
+
     def app_overview(self) -> dict[str, Any]:
         metrics = {
             "sources": self.conn.execute("select count(*) from sources").fetchone()[0],
