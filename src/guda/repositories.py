@@ -762,6 +762,7 @@ class Repository:
         import html
         from collections import Counter
         stopwords = {"the", "and", "for", "with", "that", "this", "from", "are", "was", "you", "your", "https", "http", "www", "com", "html", "quot", "amp", "x2f", "href", "rel", "nofollow", "strong", "span", "div", "the", "and", "for", "with", "that", "this", "from", "are", "was", "you", "your", "的", "了", "是", "和", "在", "有", "我", "也", "就", "都", "不", "一个"}
+        stopwords.update({str(row["platform"]).lower() for row in rows})
         words: Counter[str] = Counter()
         platforms: Counter[str] = Counter()
         item_types: Counter[str] = Counter()
@@ -777,10 +778,16 @@ class Repository:
             platforms[row["platform"]] += 1
             item_types[row["item_type"]] += 1
             timeline[(row["fetched_at"] or "")[:10]] += 1
-            for value in json.loads(row["topics"] or "[]"):
+            parsed_topics = json.loads(row["topics"] or "[]")
+            parsed_entities = json.loads(row["entities"] or "[]")
+            for value in parsed_topics:
                 topics[value] += 1
-            for value in json.loads(row["entities"] or "[]"):
+            for value in parsed_entities:
                 entities[value] += 1
+            if not parsed_topics:
+                for value in tokens[:5]:
+                    if len(value) >= 4 and value not in stopwords:
+                        topics[value] += 1
         return {
             "summary": {"evidence_count": len(rows), "source_count": len({row["source_name"] for row in rows}), "platform_count": len(platforms), "topic_count": len(topics)},
             "word_cloud": [{"name": word, "value": count} for word, count in words.most_common(limit)],
@@ -790,6 +797,29 @@ class Repository:
             "item_types": [{"name": key, "value": value} for key, value in item_types.most_common(limit)],
             "timeline": [{"date": key, "value": value} for key, value in sorted(timeline.items())],
         }
+
+    def app_insights(self, *, query: str | None = None, topic_pack_id: str | None = None, days: int = 30, limit: int = 5) -> dict[str, Any]:
+        analytics = self.app_analytics(query=query, topic_pack_id=topic_pack_id, days=days, limit=max(limit, 10))
+        timeline = analytics["timeline"]
+        total = analytics["summary"]["evidence_count"]
+        recent = sum(item["value"] for item in timeline[-max(len(timeline) // 2, 1):]) if timeline else 0
+        previous = sum(item["value"] for item in timeline[:-max(len(timeline) // 2, 1)]) if len(timeline) > 1 else 0
+        delta = recent - previous
+        rate = round(delta / previous * 100, 1) if previous else (100.0 if recent else 0.0)
+        insights: list[dict[str, Any]] = []
+        if total:
+            direction = "上升" if delta >= 0 else "下降"
+            insights.append({"type": "trend", "severity": "positive" if delta >= 0 else "warning", "title": f"证据量{direction} {abs(rate):g}%", "summary": f"最近时间段有 {recent} 条证据，上一时间段有 {previous} 条。", "metric": {"recent": recent, "previous": previous, "delta": delta, "rate": rate}})
+        if analytics["word_cloud"]:
+            top = analytics["word_cloud"][0]
+            insights.append({"type": "keyword", "severity": "info", "title": f"核心关键词：{top['name']}", "summary": f"“{top['name']}”在当前证据中出现 {top['value']} 次，是最集中的需求信号。", "metric": top})
+        if analytics["platforms"]:
+            top = analytics["platforms"][0]
+            share = round(top["value"] / total * 100, 1) if total else 0
+            insights.append({"type": "platform", "severity": "info", "title": f"{top['name']} 是主要来源", "summary": f"该平台贡献 {top['value']} 条证据，占当前样本 {share:g}%。", "metric": {**top, "share": share}})
+        for topic in analytics["topics"][:max(limit - len(insights), 0)]:
+            insights.append({"type": "topic", "severity": "neutral", "title": f"主题信号：{topic['name']}", "summary": f"该主题出现 {topic['value']} 次，建议下钻查看代表性证据。", "metric": topic})
+        return {"summary": {"evidence_count": total, "period_days": days, "insight_count": len(insights)}, "insights": insights[:limit], "timeline": timeline}
 
     def app_overview(self) -> dict[str, Any]:
         metrics = {
