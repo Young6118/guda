@@ -213,6 +213,12 @@ class Repository:
         return data
 
     def create_topic_pack(self, *, name: str, description: str | None = None) -> str:
+        existing = self.conn.execute(
+            "select id from topic_packs where lower(trim(name)) = lower(trim(?)) order by created_at asc limit 1",
+            (name,),
+        ).fetchone()
+        if existing:
+            return existing["id"]
         topic_id = new_id("topic")
         self.conn.execute(
             "insert into topic_packs (id, name, description) values (?, ?, ?)",
@@ -223,7 +229,37 @@ class Repository:
 
     def list_topic_packs(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "select id, name, description, keywords, entities, languages, regions, priority, owner, created_at, updated_at from topic_packs order by priority desc, created_at desc"
+            """
+            select tp.id, tp.name, tp.description, tp.keywords, tp.entities, tp.languages, tp.regions,
+                   tp.priority, tp.owner, tp.created_at, tp.updated_at,
+                   coalesce(stats.evidence_count, 0) as evidence_count,
+                   coalesce(stats.task_count, 0) as task_count
+            from topic_packs tp
+            left join (
+                select ct.topic_pack_id,
+                       count(distinct ct.id) as task_count,
+                       count(distinct ei.id) as evidence_count
+                from collection_tasks ct
+                left join raw_items ri on ri.task_id = ct.id
+                left join evidence_items ei on ei.raw_item_id = ri.id
+                group by ct.topic_pack_id
+            ) stats on stats.topic_pack_id = tp.id
+            where tp.id = (
+                select candidate.id
+                from topic_packs candidate
+                left join (
+                    select ct.topic_pack_id, count(distinct ei.id) as evidence_count
+                    from collection_tasks ct
+                    left join raw_items ri on ri.task_id = ct.id
+                    left join evidence_items ei on ei.raw_item_id = ri.id
+                    group by ct.topic_pack_id
+                ) candidate_stats on candidate_stats.topic_pack_id = candidate.id
+                where lower(trim(candidate.name)) = lower(trim(tp.name))
+                order by coalesce(candidate_stats.evidence_count, 0) desc, candidate.created_at asc
+                limit 1
+            )
+            order by tp.priority desc, evidence_count desc, tp.created_at asc
+            """
         ).fetchall()
         return [dict(row) for row in rows]
 
