@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { getAnalytics, getEvidence, getInsights, getReport, getTopicPacks } from '../api.js'
+import { getAnalytics, getEvidence, getInsights, getQuality, getReport, getTopicPacks } from '../api.js'
 
 export const useAnalysisStore = defineStore('analysis', {
   state: () => ({
@@ -8,6 +8,7 @@ export const useAnalysisStore = defineStore('analysis', {
     analytics: null,
     insights: null,
     report: null,
+    quality: null,
     evidence: null,
     loading: false,
     error: '',
@@ -23,15 +24,17 @@ export const useAnalysisStore = defineStore('analysis', {
           this.topicPackId ||= this.topicPacks[0]?.id || ''
         }
         const params = { ...this.filters, topic_pack_id: this.topicPackId || undefined }
-        const [analytics, insights, report, evidence] = await Promise.all([
+        const [analytics, insights, report, quality, evidence] = await Promise.all([
           getAnalytics(params),
           getInsights(params),
           getReport(params),
+          getQuality(params),
           getEvidence({ q: this.filters.q || undefined, page: 1, page_size: 10 }),
         ])
         this.analytics = analytics.data
         this.insights = insights.data
         this.report = report.data
+        this.quality = quality.data
         this.evidence = evidence.data
       } catch (error) {
         this.error = error?.response?.data?.detail || error.message || '加载失败'

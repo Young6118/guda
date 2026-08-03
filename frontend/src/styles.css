@@ -1,2 +1,2 @@
 
-.top-actions{display:flex;gap:8px;flex-wrap:wrap}.report-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px}.report-preview{white-space:pre-wrap;overflow:auto;background:#f7f8fa;border:1px solid #e2e8f0;border-radius:8px;padding:18px;line-height:1.7;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.insights-row{margin:0 0 16px}.insight-card{height:100%;border-left:3px solid #2f6f6d}.insight-head{display:flex;justify-content:space-between;align-items:center}.insight-card h3{margin:14px 0 8px;font-size:17px}.insight-card p{margin:0;color:#586474;line-height:1.6}
+.quality-row{margin:0 0 16px}.quality-card{margin-bottom:16px}.quality-metric strong{font-size:25px}

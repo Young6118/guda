@@ -226,6 +226,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return repo.app_report(query=q, topic_pack_id=topic_pack_id, days=days, limit=limit)
 
+    @app.get("/api/app/quality")
+    def app_quality(
+        topic_pack_id: str | None = None,
+        days: int = Query(default=30, ge=1, le=365),
+    ) -> dict[str, Any]:
+        return repo.app_quality(topic_pack_id=topic_pack_id, days=days)
+
     @app.get("/api/topic-packs")
     def list_topic_packs() -> list[dict[str, Any]]:
         return repo.list_topic_packs()

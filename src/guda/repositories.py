@@ -842,6 +842,61 @@ class Repository:
             lines.append(f"- [{label}]({item.get('url') or '#'}) — {item.get('platform')} / {item.get('item_type')} / {item.get('fetched_at')}")
         return {"title": title, "markdown": "\n".join(lines), "analytics": analytics, "insights": insights, "evidence": evidence}
 
+    def app_quality(self, *, topic_pack_id: str | None = None, days: int = 30) -> dict[str, Any]:
+        params: list[Any] = []
+        topic_where = ""
+        if topic_pack_id:
+            topic_where = " where ct.topic_pack_id = ?"
+            params.append(topic_pack_id)
+        rows = self.conn.execute(
+            f"""
+            select s.id, s.name, s.platform, s.health_status, s.access_status,
+                   count(distinct e.id) as evidence_count,
+                   count(distinct ri.id) as raw_count,
+                   count(distinct cr.id) as run_count,
+                   count(distinct case when cr.status in ('failed', 'error') then cr.id end) as failed_run_count,
+                   max(e.fetched_at) as latest_fetched_at,
+                   count(distinct e.text_hash) as unique_text_count
+            from sources s
+            left join collection_tasks ct on ct.source_ids like '%"' || s.id || '"%'
+            left join raw_items ri on ri.task_id = ct.id
+            left join evidence_items e on e.raw_item_id = ri.id and e.source_id = s.id
+            left join collection_runs cr on cr.task_id = ct.id
+            {topic_where}
+            group by s.id, s.name, s.platform, s.health_status, s.access_status
+            order by evidence_count desc, s.name asc
+            """,
+            params,
+        ).fetchall()
+        total_evidence = sum(row["evidence_count"] for row in rows)
+        now = datetime.now(timezone.utc)
+        sources: list[dict[str, Any]] = []
+        for row in rows:
+            latest = self._parse_utc(row["latest_fetched_at"])
+            freshness_hours = round((now - latest).total_seconds() / 3600, 1) if latest else None
+            evidence_count = row["evidence_count"]
+            duplicate_rate = round((evidence_count - row["unique_text_count"]) / evidence_count * 100, 1) if evidence_count else 0.0
+            failure_rate = round(row["failed_run_count"] / row["run_count"] * 100, 1) if row["run_count"] else 0.0
+            if row["health_status"] == "error" or failure_rate >= 50:
+                quality_status = "error"
+            elif not evidence_count or (freshness_hours is not None and freshness_hours > days * 24):
+                quality_status = "stale"
+            elif failure_rate > 0 or duplicate_rate >= 30:
+                quality_status = "warning"
+            else:
+                quality_status = "healthy"
+            sources.append({**dict(row), "freshness_hours": freshness_hours, "duplicate_rate": duplicate_rate, "failure_rate": failure_rate, "coverage_share": round(evidence_count / total_evidence * 100, 1) if total_evidence else 0.0, "quality_status": quality_status})
+        summary = {
+            "source_count": len(sources),
+            "healthy_count": sum(item["quality_status"] == "healthy" for item in sources),
+            "warning_count": sum(item["quality_status"] == "warning" for item in sources),
+            "stale_count": sum(item["quality_status"] == "stale" for item in sources),
+            "error_count": sum(item["quality_status"] == "error" for item in sources),
+            "evidence_count": total_evidence,
+            "duplicate_rate": round(sum(item["duplicate_rate"] for item in sources) / len(sources), 1) if sources else 0.0,
+        }
+        return {"summary": summary, "sources": sources, "period_days": days, "topic_pack_id": topic_pack_id}
+
     def app_overview(self) -> dict[str, Any]:
         metrics = {
             "sources": self.conn.execute("select count(*) from sources").fetchone()[0],
