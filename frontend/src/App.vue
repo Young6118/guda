@@ -6,6 +6,7 @@ import Chart from './components/Chart.vue'
 
 const store = useAnalysisStore()
 const drawer = ref(false)
+const reportDrawer = ref(false)
 const selected = ref(null)
 const wordCloud = computed(() => store.analytics?.word_cloud || [])
 const lineOption = computed(() => ({
@@ -18,6 +19,8 @@ const lineOption = computed(() => ({
 const platformOption = computed(() => pieOption(store.analytics?.platforms || []))
 const typeOption = computed(() => pieOption(store.analytics?.item_types || []))
 function pieOption(data) { return { tooltip: { trigger: 'item' }, legend: { bottom: 0, type: 'scroll' }, series: [{ type: 'pie', radius: ['38%', '70%'], data: data.map(x => ({ name: x.name, value: x.value })), label: { formatter: '{b}: {c}' } }] } }
+function openReport() { reportDrawer.value = true }
+function downloadReport() { const blob = new Blob([store.report?.markdown || ''], { type: 'text/markdown;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${store.report?.title || 'guda-report'}.md`; link.click(); URL.revokeObjectURL(url) }
 function openEvidence(row) { selected.value = row; drawer.value = true }
 async function refresh() { await store.load(); if (store.error) ElMessage.error(store.error) }
 watch(() => store.topicPackId, refresh)
@@ -32,13 +35,13 @@ onMounted(refresh)
         <el-menu-item index="overview">分析总览</el-menu-item>
         <el-menu-item index="evidence">证据明细</el-menu-item>
         <el-menu-item index="trends">趋势分析</el-menu-item>
-        <el-menu-item index="insights">洞察卡片 <el-tag size="small" type="info">Soon</el-tag></el-menu-item>
-        <el-menu-item index="reports">报告 <el-tag size="small" type="info">Soon</el-tag></el-menu-item>
+        <el-menu-item index="insights">洞察卡片 <el-tag size="small" type="success">Live</el-tag></el-menu-item>
+        <el-menu-item index="reports">报告 <el-tag size="small" type="success">Live</el-tag></el-menu-item>
       </el-menu>
       <a class="admin-link" href="../admin/">进入管理后台 →</a>
     </el-aside>
     <el-main class="main">
-      <header class="topbar"><div><div class="eyebrow">DEMAND INTELLIGENCE</div><h1>需求情报总览</h1><p>从真实证据中看见需求、主题与趋势变化</p></div><el-button @click="refresh" :loading="store.loading">刷新</el-button></header>
+      <header class="topbar"><div><div class="eyebrow">DEMAND INTELLIGENCE</div><h1>需求情报总览</h1><p>从真实证据中看见需求、主题与趋势变化</p></div><div class="top-actions"><el-button @click="openReport" :disabled="!store.report">查看报告</el-button><el-button @click="downloadReport" :disabled="!store.report">下载 Markdown</el-button><el-button @click="refresh" :loading="store.loading">刷新</el-button></div></header>
       <el-alert v-if="store.error" :title="store.error" type="error" show-icon closable @close="store.error = ''" />
       <el-card shadow="never" class="filter-card"><el-form inline @submit.prevent="refresh"><el-form-item label="主题包"><el-select v-model="store.topicPackId" filterable style="width:260px"><el-option v-for="item in store.topicPacks" :key="item.id" :label="`${item.name} · ${item.evidence_count || 0} 条证据`" :value="item.id" /></el-select></el-form-item><el-form-item label="关键词"><el-input v-model="store.filters.q" placeholder="搜索证据、标题或平台" clearable @keyup.enter="refresh" /></el-form-item><el-form-item label="时间范围"><el-select v-model="store.filters.days" style="width:130px"><el-option :value="7" label="近 7 天" /><el-option :value="30" label="近 30 天" /><el-option :value="90" label="近 90 天" /><el-option :value="365" label="全年" /></el-select></el-form-item><el-form-item><el-button type="primary" @click="refresh">应用筛选</el-button></el-form-item></el-form></el-card>
       <div v-if="store.loading && !store.analytics" class="loading"><el-skeleton :rows="8" animated /></div>
@@ -52,5 +55,6 @@ onMounted(refresh)
       </template>
     </el-main>
   </el-container>
+  <el-drawer v-model="reportDrawer" :title="store.report?.title || '分析报告'" size="min(760px, 94vw)"><div class="report-toolbar"><el-button type="primary" @click="downloadReport">下载 Markdown</el-button></div><pre class="report-preview">{{ store.report?.markdown }}</pre></el-drawer>
   <el-drawer v-model="drawer" title="证据详情" size="min(560px, 92vw)"><div v-if="selected"><h3>{{ selected.title }}</h3><el-descriptions :column="1" border><el-descriptions-item label="平台">{{ selected.platform }}</el-descriptions-item><el-descriptions-item label="类型">{{ selected.item_type }}</el-descriptions-item><el-descriptions-item label="来源">{{ selected.source?.name }}</el-descriptions-item><el-descriptions-item label="时间">{{ selected.fetched_at }}</el-descriptions-item></el-descriptions><p class="detail-text">{{ selected.text || selected.snippet }}</p><el-link v-if="selected.url" :href="selected.url" target="_blank" type="primary">打开原文</el-link></div></el-drawer>
 </template>

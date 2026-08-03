@@ -821,6 +821,27 @@ class Repository:
             insights.append({"type": "topic", "severity": "neutral", "title": f"主题信号：{topic['name']}", "summary": f"该主题出现 {topic['value']} 次，建议下钻查看代表性证据。", "metric": topic})
         return {"summary": {"evidence_count": total, "period_days": days, "insight_count": len(insights)}, "insights": insights[:limit], "timeline": timeline}
 
+    def app_report(self, *, query: str | None = None, topic_pack_id: str | None = None, days: int = 30, limit: int = 10) -> dict[str, Any]:
+        analytics = self.app_analytics(query=query, topic_pack_id=topic_pack_id, days=days, limit=max(limit, 30))
+        insights = self.app_insights(query=query, topic_pack_id=topic_pack_id, days=days, limit=limit)
+        evidence = self.evidence_items(query=query, platform=None, item_type=None, language=None, source_id=None, page=1, page_size=limit, sort="fetched_at", direction="desc")
+        pack = self.get_topic_pack(topic_pack_id) if topic_pack_id else None
+        title = f"{pack['name'] if pack else 'GUDA'} 分析报告"
+        lines = [f"# {title}", "", f"> 分析周期：近 {days} 天", f"> 关键词：{query or '全部'}", "", "## 核心指标", "", f"- 证据总量：{analytics['summary']['evidence_count']}", f"- 来源数：{analytics['summary']['source_count']}", f"- 平台数：{analytics['summary']['platform_count']}", f"- 主题数：{analytics['summary']['topic_count']}", "", "## 关键洞察", ""]
+        for item in insights["insights"]:
+            lines.extend([f"### {item['title']}", item["summary"], ""])
+        lines.extend(["## 高频主题", "", "| 主题 | 次数 |", "|---|---:|"])
+        for item in analytics["topics"][:limit]:
+            lines.append(f"| {item['name']} | {item['value']} |")
+        lines.extend(["", "## 主要平台", "", "| 平台 | 证据数 |", "|---|---:|"])
+        for item in analytics["platforms"][:limit]:
+            lines.append(f"| {item['name']} | {item['value']} |")
+        lines.extend(["", "## 代表性证据", ""])
+        for item in evidence["items"]:
+            label = item.get("title") or item.get("snippet") or item["id"]
+            lines.append(f"- [{label}]({item.get('url') or '#'}) — {item.get('platform')} / {item.get('item_type')} / {item.get('fetched_at')}")
+        return {"title": title, "markdown": "\n".join(lines), "analytics": analytics, "insights": insights, "evidence": evidence}
+
     def app_overview(self) -> dict[str, Any]:
         metrics = {
             "sources": self.conn.execute("select count(*) from sources").fetchone()[0],
