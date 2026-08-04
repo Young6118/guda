@@ -897,6 +897,49 @@ class Repository:
         }
         return {"summary": summary, "sources": sources, "period_days": days, "topic_pack_id": topic_pack_id}
 
+    def collection_task_monitor(self, *, topic_pack_id: str | None = None) -> dict[str, Any]:
+        params: list[Any] = []
+        where = ""
+        if topic_pack_id:
+            where = " where ct.topic_pack_id = ?"
+            params.append(topic_pack_id)
+        rows = self.conn.execute(
+            f"""
+            select ct.id, ct.name, ct.topic_pack_id, ct.query, ct.enabled, ct.max_items_per_run,
+                   tp.name as topic_pack_name,
+                   count(distinct cr.id) as run_count,
+                   count(distinct case when cr.status = 'completed' then cr.id end) as success_count,
+                   count(distinct case when cr.status in ('failed', 'error') then cr.id end) as failure_count,
+                   max(cr.finished_at) as last_finished_at,
+                   max(cr.started_at) as last_started_at,
+                   coalesce(sum(cr.items_fetched), 0) as items_fetched,
+                   coalesce(sum(cr.items_normalized), 0) as items_normalized,
+                   max(cr.status) as last_status,
+                   max(cr.error_summary) as last_error
+            from collection_tasks ct
+            join topic_packs tp on tp.id = ct.topic_pack_id
+            left join collection_runs cr on cr.task_id = ct.id
+            {where}
+            group by ct.id, ct.name, ct.topic_pack_id, ct.query, ct.enabled, ct.max_items_per_run, tp.name
+            order by coalesce(last_finished_at, last_started_at) desc, ct.name asc
+            """,
+            params,
+        ).fetchall()
+        tasks = []
+        for row in rows:
+            item = dict(row)
+            if not item["run_count"]:
+                item["monitor_status"] = "never_run"
+            elif item["last_status"] == "running":
+                item["monitor_status"] = "running"
+            elif item["failure_count"] and item["failure_count"] >= item["success_count"]:
+                item["monitor_status"] = "error"
+            else:
+                item["monitor_status"] = "healthy"
+            item["success_rate"] = round(item["success_count"] / item["run_count"] * 100, 1) if item["run_count"] else 0.0
+            tasks.append(item)
+        return {"summary": {"task_count": len(tasks), "healthy_count": sum(t["monitor_status"] == "healthy" for t in tasks), "error_count": sum(t["monitor_status"] == "error" for t in tasks), "never_run_count": sum(t["monitor_status"] == "never_run" for t in tasks), "running_count": sum(t["monitor_status"] == "running" for t in tasks)}, "tasks": tasks}
+
     def app_overview(self) -> dict[str, Any]:
         metrics = {
             "sources": self.conn.execute("select count(*) from sources").fetchone()[0],
