@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { getAnalytics, getEvidence, getInsights, getQuality, getReport, getTasks, getTopicPacks, runTask } from '../api.js'
+import { getAnalytics, getEvidence, getInsights, getQuality, getReport, getTaskDetail, getTasks, getTopicPacks, runTask } from '../api.js'
 
 export const useAnalysisStore = defineStore('analysis', {
   state: () => ({

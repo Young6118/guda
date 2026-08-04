@@ -237,6 +237,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def app_tasks(topic_pack_id: str | None = None) -> dict[str, Any]:
         return repo.collection_task_monitor(topic_pack_id=topic_pack_id)
 
+    @app.get("/api/app/tasks/{task_id}")
+    def app_task_detail(task_id: str) -> dict[str, Any]:
+        detail = repo.collection_task_detail(task_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="collection task not found")
+        return detail
+
     @app.post("/api/app/tasks/{task_id}/run")
     def app_run_task(task_id: str) -> dict[str, Any]:
         try:

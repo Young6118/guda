@@ -897,6 +897,23 @@ class Repository:
         }
         return {"summary": summary, "sources": sources, "period_days": days, "topic_pack_id": topic_pack_id}
 
+    def collection_task_detail(self, task_id: str) -> dict[str, Any] | None:
+        task = self.conn.execute(
+            "select ct.id, ct.name, ct.topic_pack_id, ct.query, ct.enabled, ct.max_items_per_run, tp.name as topic_pack_name from collection_tasks ct join topic_packs tp on tp.id = ct.topic_pack_id where ct.id = ?",
+            (task_id,),
+        ).fetchone()
+        if task is None:
+            return None
+        runs = self.conn.execute(
+            """
+            select id, started_at, finished_at, status, items_fetched, items_normalized,
+                   items_deduped, cost_usd, error_summary, run_log_uri
+            from collection_runs where task_id = ? order by started_at desc limit 30
+            """,
+            (task_id,),
+        ).fetchall()
+        return {"task": dict(task), "runs": [dict(row) for row in runs]}
+
     def collection_task_monitor(self, *, topic_pack_id: str | None = None) -> dict[str, Any]:
         params: list[Any] = []
         where = ""
