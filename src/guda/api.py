@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,8 @@ from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from guda.scheduler import scheduler_loop
 
 from guda.collection import CollectionService
 from guda.config import Settings
@@ -50,6 +53,11 @@ class CollectionTaskCreate(BaseModel):
     source_ids: list[str]
     query: str
     max_items_per_run: int = 10
+
+
+class TaskScheduleUpdate(BaseModel):
+    schedule: str | None = None
+    enabled: bool = True
 
 
 class RatePolicyUpdate(BaseModel):
@@ -106,9 +114,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        stop_scheduler = asyncio.Event()
+        scheduler_task = asyncio.create_task(scheduler_loop(repo, collection, stop_scheduler))
         try:
             yield
         finally:
+            stop_scheduler.set()
+            await scheduler_task
             conn.close()
 
     app = FastAPI(title="Global User Data Analysis", version="0.1.0", lifespan=lifespan)
@@ -251,6 +263,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(status_code=404, detail="collection task not found")
         return collection.run_task(task_id).__dict__
+
+    @app.patch("/api/app/tasks/{task_id}/schedule")
+    def update_task_schedule(task_id: str, payload: TaskScheduleUpdate) -> dict[str, Any]:
+        if payload.schedule and not __import__('re').fullmatch(r"\d+[mhd]", payload.schedule):
+            raise HTTPException(status_code=422, detail="schedule must look like 5m, 2h, or 1d")
+        try:
+            repo.update_task_schedule(task_id, schedule=payload.schedule, enabled=payload.enabled)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="collection task not found")
+        return {"id": task_id, "schedule": payload.schedule, "enabled": payload.enabled}
 
     @app.get("/api/topic-packs")
     def list_topic_packs() -> list[dict[str, Any]]:

@@ -51,6 +51,8 @@ class TaskRecord:
     source_ids: list[str]
     query: str
     max_items_per_run: int
+    schedule: str | None = None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -437,7 +439,7 @@ class Repository:
 
     def get_task(self, task_id: str) -> TaskRecord:
         row = self.conn.execute(
-            "select id, name, topic_pack_id, source_ids, query, max_items_per_run from collection_tasks where id = ?",
+            "select id, name, topic_pack_id, source_ids, query, max_items_per_run, schedule, enabled from collection_tasks where id = ?",
             (task_id,),
         ).fetchone()
         if row is None:
@@ -449,7 +451,32 @@ class Repository:
             source_ids=json.loads(row["source_ids"]),
             query=row["query"],
             max_items_per_run=row["max_items_per_run"],
+            schedule=row["schedule"],
+            enabled=bool(row["enabled"]),
         )
+
+    def update_task_schedule(self, task_id: str, *, schedule: str | None, enabled: bool) -> None:
+        if self.conn.execute("select 1 from collection_tasks where id = ?", (task_id,)).fetchone() is None:
+            raise KeyError(f"collection task not found: {task_id}")
+        self.conn.execute("update collection_tasks set schedule = ?, enabled = ?, updated_at = ? where id = ?", (schedule, int(enabled), utc_now(), task_id))
+        self.conn.commit()
+
+    def list_due_tasks(self) -> list[str]:
+        rows = self.conn.execute("select ct.id, ct.schedule, max(cr.finished_at) as last_finished_at from collection_tasks ct left join collection_runs cr on cr.task_id = ct.id where ct.enabled = 1 and ct.schedule is not null and ct.schedule != '' group by ct.id, ct.schedule").fetchall()
+        now = datetime.now(timezone.utc)
+        due = []
+        for row in rows:
+            schedule = row["schedule"] or ""
+            unit = schedule[-1:] if schedule else ""
+            try:
+                amount = int(schedule[:-1]) if unit in {"m", "h", "d"} else int(schedule)
+                seconds = amount * {"m": 60, "h": 3600, "d": 86400}.get(unit, 60)
+            except ValueError:
+                continue
+            last = datetime.fromisoformat(row["last_finished_at"].replace("Z", "+00:00")) if row["last_finished_at"] else None
+            if last is None or (now - last).total_seconds() >= seconds:
+                due.append(row["id"])
+        return due
 
     def start_run(self, task_id: str) -> str:
         run_id = new_id("run")
@@ -899,7 +926,7 @@ class Repository:
 
     def collection_task_detail(self, task_id: str) -> dict[str, Any] | None:
         task = self.conn.execute(
-            "select ct.id, ct.name, ct.topic_pack_id, ct.query, ct.enabled, ct.max_items_per_run, tp.name as topic_pack_name from collection_tasks ct join topic_packs tp on tp.id = ct.topic_pack_id where ct.id = ?",
+            "select ct.id, ct.name, ct.topic_pack_id, ct.query, ct.enabled, ct.schedule, ct.max_items_per_run, tp.name as topic_pack_name from collection_tasks ct join topic_packs tp on tp.id = ct.topic_pack_id where ct.id = ?",
             (task_id,),
         ).fetchone()
         if task is None:
@@ -924,6 +951,7 @@ class Repository:
             f"""
             select ct.id, ct.name, ct.topic_pack_id, ct.query, ct.enabled, ct.max_items_per_run,
                    tp.name as topic_pack_name,
+                   ct.schedule, ct.enabled,
                    count(distinct cr.id) as run_count,
                    count(distinct case when cr.status = 'completed' then cr.id end) as success_count,
                    count(distinct case when cr.status in ('failed', 'error') then cr.id end) as failure_count,
